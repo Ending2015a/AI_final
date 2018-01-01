@@ -16,12 +16,13 @@ from tqdm import trange
 blank = 'XXXXX'
 data_path = 'AI_Course_Final/CBTest/data'
 output_path = 'questions/'
+encode_path = 'encode/'
 encode_map_path = 'enc_map.pkl'
 decode_map_path = 'dec_map.pkl'
 vocab_path = 'vocab.pkl'
-vocab_threshold = 1
+vocab_threshold = 50
 
-exclusive_vocab = ['', 'XXXXX']
+exclusive_vocab = []
 
 train_list = ['cbtest_CN_train.txt', 
             'cbtest_NE_train.txt', 
@@ -49,6 +50,11 @@ args = parser.parse_args()
 
 if not os.path.exists(output_path):
     os.makedirs(output_path)
+
+if not os.path.exists(encode_path):
+    os.makedirs(encode_path)
+
+#====================
 
 def read_data(filename):
 
@@ -82,13 +88,12 @@ def parse_questions(lines):
             line = lines[i].split(' ', 1)[1]
             sent.append( filter(line) )
         last = [x for x in lines[-1].split('\t') if x!='' ]
-        q = filter(last[0].split(' ', 1)[1])
+        q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
         a = ''.join(ch for ch in last[1] if ch not in exc)
         option = []
         for x in last[2].split('|'):
             o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
-            if o != '':
-                option.append(o)
+            option.append(o)
 
 
         question = {'sentences': sent, 
@@ -135,7 +140,7 @@ def build_mapping(vocab, thres=50):
         return enc_map, dec_map
 
     enc_map, dec_map = {}, {}
-    for voc in ['<st>', '<ed>', '<rare>']:
+    for voc in ['<blank>', '<rare>']:
         enc_map, dec_map = add(enc_map, dec_map, voc)
     for voc, cnt in tqdm(vocab.items(), desc='map', ncols=80):
         if cnt < thres:
@@ -144,11 +149,58 @@ def build_mapping(vocab, thres=50):
             enc_map, dec_map = add(enc_map, dec_map, voc)
 
     return enc_map, dec_map
-    
+
+def encode_questions(raw_qs, enc_map):
+    enc_qs = []
+    for q in tqdm(raw_qs, desc='enc', ncols=80):
+        try:
+            enc_q = encode_question(q, enc_map)
+        except KeyError as e:
+            print_question(q)
+            raise e
+        enc_qs.append(enc_q)
+    return enc_qs
+
+def encode_question(q, enc_map):
+    enc_st = []
+    for sent in q['sentences']:
+        ids = encode_str(sent, enc_map)
+        enc_st.append(ids)
+
+    enc_q = encode_str(q['question'], enc_map)
+    enc_a = encode(q['answer'], enc_map)
+
+    enc_o = [encode(opt, enc_map) for opt in q['options']]
+
+    enc_q = {'sentences': enc_st, 
+            'question': enc_q,
+            'answer': enc_a,
+            'options': enc_o}
+
+    return enc_q
+
+def decode_question(q, dec_map):
+    raw_st = []
+    for ids in q['sentences']:
+        sent = decode_str(ids, dec_map)
+        raw_st.append(sent)
+    raw_q = decode_str(q['question'], dec_map)
+    raw_a = decode(q['answer'], dec_map)
+    raw_o = [decode(opt, dec_map) for opt in q['options']]
+
+    raw_q = {'sentences': raw_st,
+            'question': raw_q,
+            'answer': raw_a,
+            'options': raw_o}
+
+    return raw_q
 
 def encode(word, e_map):
     word = word.lower()
     return e_map[word]
+
+def decode(ids, d_map):
+    return d_map[ids]
 
 def encode_str(sent, e_map):
     ids = [e_map[x.lower()] for x in sent.split() if x.lower() in e_map ]
@@ -159,11 +211,11 @@ def decode_str(ids, d_map):
 
 
 def print_question(q):
-    for sent in q['sentences']:
-        print(sent)
-    print(q['question'])
-    print(q['options'])
-    print(q['answer'])
+    for idx, sent in enumerate(q['sentences']):
+        print('{}: {}'.format(idx, sent))
+    print('Q: ', q['question'])
+    print('Opt: ', q['options'])
+    print('A: ', q['answer'])
 
 if __name__ == '__main__':
 
@@ -206,10 +258,7 @@ if __name__ == '__main__':
             qs.extend(cPickle.load( open(file, 'rb') ))
 
         # create vocabulary
-        try:
-            vocab = create_vocab(qs, exc=exclusive_vocab, thres=vocab_threshold)
-        except Exception as q:
-            print_question(q)   
+        vocab = create_vocab(qs, exc=exclusive_vocab, thres=vocab_threshold)
 
         print('DONE !!')
         print('Total: {} words'.format(len(vocab)))
@@ -242,6 +291,27 @@ if __name__ == '__main__':
         cPickle.dump(dec_map, open(decode_map_path, 'wb'))
 
         print('DONE !!')
+
+    enc_map = cPickle.load( open(encode_map_path, 'rb') )
+    dec_map = cPickle.load( open(decode_map_path, 'rb') )
+
+    if 'enc' in args.progress or 'all' in args.progress:
+        print('Encoding questions...')
+
+        for file in gen_pkl_file:
+            filename = os.path.basename(file)
+
+            print('Encoding data: {}'.format(filename))
+            questions = cPickle.load(open(file, 'rb'))
+            enc_questions = encode_questions(questions, enc_map)
+            outputfile = os.path.join(encode_path, filename)
+
+            print('Save to {}'.format(outputfile))
+            with open(outputfile, 'wb') as f:
+                cPickle.dump(enc_questions, f)
+
+        print('DONE !!')
+
 
     print('')
     print('========== FORMAT ==========')
