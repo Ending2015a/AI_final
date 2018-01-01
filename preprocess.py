@@ -21,7 +21,7 @@ decode_map_path = 'dec_map.pkl'
 vocab_path = 'vocab.pkl'
 vocab_threshold = 1
 
-exclusive_vocab = ['s']
+exclusive_vocab = ['', 'XXXXX']
 
 train_list = ['cbtest_CN_train.txt', 
             'cbtest_NE_train.txt', 
@@ -83,8 +83,13 @@ def parse_questions(lines):
             sent.append( filter(line) )
         last = [x for x in lines[-1].split('\t') if x!='' ]
         q = filter(last[0].split(' ', 1)[1])
-        a = last[1]
-        option = [x.replace('\n', '') for x in last[2].split('|') if x!='']
+        a = ''.join(ch for ch in last[1] if ch not in exc)
+        option = []
+        for x in last[2].split('|'):
+            o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
+            if o != '':
+                option.append(o)
+
 
         question = {'sentences': sent, 
                     'question': q, 
@@ -153,6 +158,13 @@ def decode_str(ids, d_map):
     return ' '.join([d_map[x] for x in ids])
 
 
+def print_question(q):
+    for sent in q['sentences']:
+        print(sent)
+    print(q['question'])
+    print(q['options'])
+    print(q['answer'])
+
 if __name__ == '__main__':
 
     if 'parse' in args.progress or 'all' in args.progress:
@@ -194,7 +206,10 @@ if __name__ == '__main__':
             qs.extend(cPickle.load( open(file, 'rb') ))
 
         # create vocabulary
-        vocab = create_vocab(qs, exc=exclusive_vocab, thres=vocab_threshold)
+        try:
+            vocab = create_vocab(qs, exc=exclusive_vocab, thres=vocab_threshold)
+        except Exception as q:
+            print_question(q)   
 
         print('DONE !!')
         print('Total: {} words'.format(len(vocab)))
