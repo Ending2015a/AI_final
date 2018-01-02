@@ -119,5 +119,4 @@ class MemNet(object):
 
 
 net = MemNet(1000)
-net.build_input()
 net.build_model()
