@@ -20,7 +20,7 @@ encode_path = 'encode/'
 encode_map_path = 'enc_map.pkl'
 decode_map_path = 'dec_map.pkl'
 vocab_path = 'vocab.pkl'
-vocab_threshold = 50
+vocab_threshold = 100
 
 exclusive_vocab = []
 
@@ -217,6 +217,25 @@ def print_question(q):
     print('Opt: ', q['options'])
     print('A: ', q['answer'])
 
+def extract_questions(q, total_sent=0, total_q_size=0, max_sent_size=0, avg_sent_size=0, max_query_size=0, avg_query_size=0):
+
+    for i in range(len(q)):
+        for j in range(len(q[i]['sentences'])):
+            sent_size = len(q[i]['sentences'][j])
+            max_sent_size = max(sent_size, max_sent_size)
+            avg_sent_size = avg_sent_size * (total_sent/(total_sent+1)) + sent_size/(total_sent+1)
+            total_sent += 1
+
+        query_size = len(q[i]['question'])
+        max_query_size = max(query_size, max_query_size)
+        avg_query_size = avg_query_size * (total_q_size/(total_q_size+1)) + query_size/(total_q_size+1)
+
+        total_q_size += 1
+
+    return total_sent, total_q_size, max_sent_size, avg_sent_size, max_query_size, avg_query_size
+
+
+
 if __name__ == '__main__':
 
     if 'parse' in args.progress or 'all' in args.progress:
@@ -311,6 +330,89 @@ if __name__ == '__main__':
                 cPickle.dump(enc_questions, f)
 
         print('DONE !!')
+
+
+    print('All DONE !!')
+
+    if 'sum' in args.progress or 'all' in args.progress:
+        print('Generating Summary...')
+
+        vocab = cPickle.load(open(vocab_path, 'rb'))
+        enc_map = cPickle.load(open(encode_map_path, 'rb'))
+        dec_map = cPickle.load(open(decode_map_path, 'rb'))
+
+        train_size = 0
+        val_size = 0
+        test_size = 0
+
+        sent_list = []
+        q_size_list = []
+        max_sent = 0
+        avg_sent_list = []
+        max_query = 0
+        avg_query_list = []
+
+        print('========= SUMMARY ==========')
+
+        def summary(q_list):
+            total_size = 0
+            for path in q_list:
+                n, e = os.path.splitext(os.path.basename(path))
+                filename = os.path.join(encode_path, n+'.pkl')
+
+                print('')
+                print('=== File: ', filename)
+
+                encode_question = cPickle.load(open(filename, 'rb'))
+
+                total_sent, total_q_size, max_sent_size, avg_sent_size, max_query_size, avg_query_size = extract_questions(encode_question)
+
+                print('Maximum Sentence size: ', max_sent_size)
+                print('Average Sentence size: ', avg_sent_size)
+                print('Maximum Query size: ', max_query_size)
+                print('Average Query size: ', avg_query_size)
+                print('Total Question: ', total_q_size)
+
+                global sent_list
+                global q_size_list
+                global max_sent
+                global max_query
+                global avg_sent_list
+                global avg_query_list
+
+                total_size += total_q_size
+                sent_list.append(total_sent)            
+                q_size_list.append(total_q_size)
+                max_sent = max(max_sent, max_sent_size)
+                max_query = max(max_query, max_query_size)
+                avg_sent_list.append(avg_sent_size)
+                avg_query_list.append(avg_query_size)
+            return total_size
+
+        train_size = summary(train_list)
+        val_size = summary(valid_list)
+        test_size = summary(test_list)
+
+        avg_sent = sum(ts*avgs for ts, avgs in zip(sent_list, avg_sent_list))/sum(sent_list)
+        avg_query = sum(tq*avgq for tq, avgq in zip(q_size_list, avg_query_list))/sum(q_size_list)
+
+
+        print('')
+        print('========= SUMMARY ==========')
+
+        print('')
+        print('=========== INFO ===========')
+        print('Encode map size: ', len(enc_map))
+        print('Decode map size: ', len(dec_map))
+        print('Vocabulary size: ', len(vocab))
+        print('Maximum Sentence size: ', max_sent)
+        print('Average Sentence size: ', avg_sent)
+        print('Maximum Query size: ', max_query)
+        print('Average Query size: ', avg_query)
+        print('Total Question: ', train_size + val_size + test_size)
+        print('  |-- Train: ', train_size)
+        print('  |-- Val: ', val_size)
+        print('  |-- Test: ', test_size)
 
 
     print('')
