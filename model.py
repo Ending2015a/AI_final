@@ -33,7 +33,6 @@ class MemNet(object):
         self.emb_initializer = emb_initializer
 
         self._encoding = tf.constant(self.sent_encoding(self.sentence_size, self.embed_size), name='encoding') # [sentence_size, embed_size]
-        self.build_input()
 
     def _inputs_embedding(self, inputs, hop=0, reuse=tf.AUTO_REUSE):
         with tf.variable_scope('embedding', reuse=reuse):
@@ -76,31 +75,34 @@ class MemNet(object):
             x = tf.nn.xw_plus_b(inputs, weights, biases, name=name)
             return x
 
+    def build_model(self, sentences=None, query=None, answer=None):
 
-    def build_input(self):
-        self._sentences = tf.placeholder(tf.int32, [None, self.memory_size, self.sentence_size], name='sentences')
-        self._query = tf.placeholder(tf.int32, [None, self.option_size, self.sentence_size], name='query')
-        self._answer = tf.placeholder(tf.int32, [None], name='answer')
-        
+        if sentences == None:
+            sentences = tf.placeholder(tf.int32, [None, self.memory_size, self.sentence_size], name='sentences')
 
-    def build_model(self):
+        if query == None:
+            query = tf.placeholder(tf.int32, [None, self.option_size, self.sentence_size], name='query')
+
+        if answer == None:
+            answer = tf.placeholder(tf.int32, [None], name='answer')
+
         with tf.variable_scope('MemN2N'):
-            emb_q = self._query_embedding(self._query) # [batch_size, option_size, sentence_size, embed_size]
+            emb_q = self._query_embedding(query) # [batch_size, option_size, sentence_size, embed_size]
             #print('emb_q shape: ', emb_q.get_shape())
             u = tf.reduce_sum(emb_q*self._encoding, 2) # [batch_size, option_size, embed_size]
             #print('u shape: ', u.get_shape())
 
-            onehot = tf.one_hot(self._answer, self.option_size) # [batch_size, option_size]
+            onehot = tf.one_hot(answer, self.option_size) # [batch_size, option_size]
             #print('onehot shape: ', onehot.get_shape())
 
             for hop in range(self.n_hop):
-                emb_i = self._inputs_embedding(self._sentences, hop) # [batch_size, memory_size, sentence_size, embed_size]
+                emb_i = self._inputs_embedding(sentences, hop) # [batch_size, memory_size, sentence_size, embed_size]
                 #print('emb_i shape: ', emb_i.get_shape())
                 mem_i = tf.reduce_sum(emb_i*self._encoding, 2) # [batch_size, memory_size, embed_size]
                 mem_i = tf.expand_dims(mem_i, 1) # [batch_size, 1, memory_size, embed_size]
                 #print('mem_i shape: ', mem_i.get_shape())
 
-                emb_o = self._outputs_embedding(self._sentences, hop) # same as emb_i
+                emb_o = self._outputs_embedding(sentences, hop) # same as emb_i
                 #print('emb_o shape: ', emb_o.get_shape())
                 mem_o = tf.reduce_sum(emb_o*self._encoding, 2) # same as mem_i
                 mem_o = tf.expand_dims(mem_o, 1) # [batch_size, 1, memory_size, embed_size]
@@ -128,31 +130,46 @@ class MemNet(object):
 
             logits = self._fc(a_hat, self.option_size, 'fc2')
             #print('logits shape: ', logits.get_shape())
+
+            selection = tf.argmax(logits, 1)
 
             cross_entropy = tf.nn.softmax_cross_entropy_with_logits(labels=onehot, logits=logits)
             loss = tf.reduce_mean(cross_entropy)
 
-            return loss
+            class Handle(object):
+                pass
+
+            handle = Handle()
+            handle.sentences = sentences
+            handle.query = query
+            handle.answer = answer
+            handle.selection = selection
+
+            return handle, loss
 
 
-    def build_sampler(self):
+    def build_sampler(self, sentences=None, query=None):
+
+        if sentences == None:
+            sentences = tf.placeholder(tf.int32, [None, self.memory_size, self.sentence_size], name='sentences')
+
+        if query == None:
+            query = tf.placeholder(tf.int32, [None, self.option_size, self.sentence_size], name='query')
+
         with tf.variable_scope('MemN2N'):
-            emb_q = self._query_embedding(self._query) # [batch_size, option_size, sentence_size, embed_size]
+            emb_q = self._query_embedding(query) # [batch_size, option_size, sentence_size, embed_size]
             #print('emb_q shape: ', emb_q.get_shape())
             u = tf.reduce_sum(emb_q*self._encoding, 2) # [batch_size, option_size, embed_size]
             #print('u shape: ', u.get_shape())
 
-            onehot = tf.one_hot(self._answer, self.option_size) # [batch_size, option_size]
-            #print('onehot shape: ', onehot.get_shape())
-
             for hop in range(self.n_hop):
-                emb_i = self._inputs_embedding(self._sentences, hop) # [batch_size, memory_size, sentence_size, embed_size]
+                emb_i = self._inputs_embedding(sentences, hop) # [batch_size, memory_size, sentence_size, embed_size]
                 #print('emb_i shape: ', emb_i.get_shape())
                 mem_i = tf.reduce_sum(emb_i*self._encoding, 2) # [batch_size, memory_size, embed_size]
                 mem_i = tf.expand_dims(mem_i, 1) # [batch_size, 1, memory_size, embed_size]
                 #print('mem_i shape: ', mem_i.get_shape())
 
-                emb_o = self._outputs_embedding(self._sentences, hop) # same as emb_i
+                emb_o = self._outputs_embedding(sentences, hop) # same as emb_i
                 #print('emb_o shape: ', emb_o.get_shape())
                 mem_o = tf.reduce_sum(emb_o*self._encoding, 2) # same as mem_i
                 mem_o = tf.expand_dims(mem_o, 1) # [batch_size, 1, memory_size, embed_size]
@@ -181,9 +198,17 @@ class MemNet(object):
             logits = self._fc(a_hat, self.option_size, 'fc2')
             #print('logits shape: ', logits.get_shape())
 
-            samples = tf.argmax(logits, 1)
+            selection = tf.argmax(logits, 1)
 
-            return samples
+            class Handle(object):
+                pass
+
+            handle = Handle()
+            handle.sentences = sentences
+            handle.query = query
+            handle.selection = selection
+
+            return handle, selection
 
 
 

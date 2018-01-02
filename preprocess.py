@@ -56,6 +56,27 @@ if not os.path.exists(encode_path):
 
 #====================
 
+def get_encoded_data(q_list):
+    qa = []
+    for path in tqdm(q_list, desc='Read', ncols=80):
+        n, e = os.path.splitext(os.path.basename(path))
+        filename = os.path.join(encode_path, n+'.pkl')
+        encode_question = cPickle.load(open(filename, 'rb'))
+
+        qa.extend(encode_question)
+    return qa
+
+
+
+def get_encoded_train_data():
+    return get_encoded_data(train_list)
+
+def get_encoded_validation_data():
+    return get_encoded_data(valid_list)
+
+def get_encoded_test_data():
+    return get_encoded_data(test_list)
+
 def read_data(filename):
 
     def is_int(s):
@@ -64,7 +85,6 @@ def read_data(filename):
             return True
         except ValueError:
             return False
-
     lines = []
     with open(filename, 'r') as file:
         raw_lines = file.readlines()
@@ -91,15 +111,21 @@ def parse_questions(lines):
         q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
         a = ''.join(ch for ch in last[1] if ch not in exc)
         option = []
+        question_with_option = []
         for x in last[2].split('|'):
             o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
             option.append(o)
+            o = q.replace('<blank>', o)
+            question_with_option.append(o)
 
+        idx = option.index(a)
 
         question = {'sentences': sent, 
                     'question': q, 
                     'answer': a, 
-                    'options': option }
+                    'options': option,
+                    'q_with_o': question_with_option,
+                    'index': idx}
         return question
 
     for i in trange(len(lines) // 21, desc='Parsing', ncols=80):
@@ -172,10 +198,17 @@ def encode_question(q, enc_map):
 
     enc_o = [encode(opt, enc_map) for opt in q['options']]
 
+    enc_qwo = []
+    for qwo in q['q_with_o']:
+        ids = encode_str(qwo, enc_map)
+        enc_qwo.append(ids)
+
     enc_q = {'sentences': enc_st, 
             'question': enc_q,
             'answer': enc_a,
-            'options': enc_o}
+            'options': enc_o,
+            'q_with_o': enc_qwo,
+            'index': q['index']}
 
     return enc_q
 
@@ -188,10 +221,17 @@ def decode_question(q, dec_map):
     raw_a = decode(q['answer'], dec_map)
     raw_o = [decode(opt, dec_map) for opt in q['options']]
 
+    raw_qwo = []
+    for ids in q['q_with_o']:
+        qwo = decode_str(ids, dec_map)
+        raw_qwo.append(qwo)
+
     raw_q = {'sentences': raw_st,
             'question': raw_q,
             'answer': raw_a,
-            'options': raw_o}
+            'options': raw_o,
+            'q_with_o': raw_qwo,
+            'index': q['index']}
 
     return raw_q
 
@@ -212,10 +252,13 @@ def decode_str(ids, d_map):
 
 def print_question(q):
     for idx, sent in enumerate(q['sentences']):
-        print('{}: {}'.format(idx, sent))
+        print('S{}: {}'.format(idx, sent))
     print('Q: ', q['question'])
     print('Opt: ', q['options'])
     print('A: ', q['answer'])
+    for idx, qwo in enumerate(q['q_with_o']):
+        print('Opt{}: {}'.format(idx, qwo))
+    print('ID: ', q['index'])
 
 def extract_questions(q, total_sent=0, total_q_size=0, max_sent_size=0, avg_sent_size=0, max_query_size=0, avg_query_size=0):
 
@@ -263,7 +306,8 @@ if __name__ == '__main__':
             # save to file
             with open(outputfile, 'wb') as f:
                 cPickle.dump(question_list, f)
-
+        print('======= TEST OUTPUT ========')
+        print_question(question_list[0])
         print('DONE !!')
 
     gen_pkl_file = [ os.path.join(output_path, x) 
@@ -418,10 +462,21 @@ if __name__ == '__main__':
     print('')
     print('========== FORMAT ==========')
     print('questions')
-    print('  |-- sentences (a string list contains 20 lines of sentences)')
-    print('  |-- question (a string which is the main question)')
-    print('  |-- answer (a string which is the answer of this question)')
-    print('  |-- options (a string list contains multiple options of this question)')
+    print('  |-- sentences (a string list, contains 20 lines of sentences)')
+    print('  |-- questions (a string list, which is the original question)')
+    print('  |-- answer (an string which is the answer of this question)')
+    print('  |-- options (a string list, contains multiple options for this question)')
+    print('  |-- q_with_o (a string list, contains 10 lines of original questions with 10 different options filled in the blank)')
+    print('  |-- index (an integer, specifies the index of the correct option)')
+
+
+    #print('')
+    #print('========== FORMAT ==========')
+    #print('questions')
+    #print('  |-- sentences (a string list contains 20 lines of sentences)')
+    #print('  |-- question (a string which is the main question)')
+    #print('  |-- answer (a string which is the answer of this question)')
+    #print('  |-- options (a string list contains multiple options of this question)')
 
 
 #filename = os.path.join(data_path, train_list[0])
