@@ -25,7 +25,7 @@ def main():
     print('Bulid Solver...')
     solver = Solver(model, enc_map, dec_map,
                     n_epochs = 500,
-                    batch_size = 32,
+                    batch_size = 64,
                     learning_rate = 0.01,
                     log_path = './log/',
                     model_path = './checkpoint/',

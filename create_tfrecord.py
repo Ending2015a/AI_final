@@ -55,21 +55,24 @@ def create_tfrecords(data, record_name, split_num = 100, start_from=0):
 
         for idx in tqdm(range(st, ed), desc='Examples', ncols=80, leave=False):
             sents = data[idx]['sentences']
-            qwos = data[idx]['q_with_o']
+            qwos = data[idx]['queries']
             index = data[idx]['index']
+            mask = data[idx]['position_mask']
             
             padded_sents = [ padding_sentence(sent, padding_size) for sent in sents]
             padded_qwos = [ padding_sentence(qwo, padding_size) for qwo in qwos]
             index = [index]
+            padded_mask = padding_sentence(mask, padding_size)
 
-            padded_sents = [j for i in padded_sents for j in i]
-            padded_qwos = [j for i in padded_qwos for j in i]
+            flatten_sents = [j for i in padded_sents for j in i]
+            flatten_qwos = [j for i in padded_qwos for j in i]
 
             example = tf.train.Example(features=tf.train.Features(
                     feature={
-                            'sentences': _int64_feature(padded_sents),
-                            'q_with_o': _int64_feature(padded_qwos),
-                            'index': _int64_feature(index)
+                            'sentences': _int64_feature(flatten_sents),
+                            'queries': _int64_feature(flatten_qwos),
+                            'index': _int64_feature(index),
+                            'position_mask': _int64_feature(padded_mask)
                         }))
 
             count += 1
@@ -103,3 +106,7 @@ if __name__ == '__main__':
 
     data = get_encoded_test_data()
     create_tfrecords(data, test_record_file, test_split_count)
+
+
+
+

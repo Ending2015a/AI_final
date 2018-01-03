@@ -19,6 +19,7 @@ def position_encoding(sentence_size, embedding_size):
 
 class MemNet(object):
     def __init__(self, vocab_size, embed_size=512, n_hop=3, memory_size=20, sentence_size=216, option_size=10,
+            position_weight = 0.3,
             sentence_encoding = position_encoding,
             emb_initializer = tf.random_normal_initializer(stddev=0.1)):
 
@@ -28,6 +29,7 @@ class MemNet(object):
         self.memory_size = memory_size
         self.sentence_size = sentence_size
         self.option_size = option_size
+        self.position_weight = position_weight
 
         self.sent_encoding = sentence_encoding
         self.emb_initializer = emb_initializer
@@ -75,7 +77,7 @@ class MemNet(object):
             x = tf.nn.xw_plus_b(inputs, weights, biases, name=name)
             return x
 
-    def build_model(self, sentences=None, query=None, answer=None):
+    def build_model(self, sentences=None, query=None, answer=None, mask=None):
 
         if sentences == None:
             sentences = tf.placeholder(tf.int32, [None, self.memory_size, self.sentence_size], name='sentences')
@@ -86,9 +88,21 @@ class MemNet(object):
         if answer == None:
             answer = tf.placeholder(tf.int32, [None], name='answer')
 
+        if mask:
+            mask = tf.expand_dims(mask, 1) # [batch_size, 1, sentence_size]
+            mask = tf.expand_dims(mask, 3) # [batch_size, 1, sentence_size, 1]
+            neg_mask = tf.abs(mask-1)
+
         with tf.variable_scope('MemN2N'):
             emb_q = self._query_embedding(query) # [batch_size, option_size, sentence_size, embed_size]
-            u = tf.reduce_sum(emb_q*self._encoding, 2) # [batch_size, option_size, embed_size]
+            if mask:
+                print('With position weight')
+                neg = tf.reduce_sum(emb_q * self._encoding * neg_mask, 2)
+                pos = tf.reduce_sum(emb_q * self._encoding * mask, 2)
+                u = neg * (1-self.position_weight) + pos * self.position_weight
+            else:
+                print('Without position weight')
+                u = tf.reduce_sum(emb_q * self._encoding, 2) # [batch_size, option_size, embed_size]
 
             onehot = tf.one_hot(answer, self.option_size) # [batch_size, option_size]
 
@@ -135,17 +149,29 @@ class MemNet(object):
             return handle, loss
 
 
-    def build_sampler(self, sentences=None, query=None):
+    def build_sampler(self, sentences=None, query=None, mask=None):
 
         if sentences == None:
             sentences = tf.placeholder(tf.int32, [None, self.memory_size, self.sentence_size], name='sentences')
 
         if query == None:
             query = tf.placeholder(tf.int32, [None, self.option_size, self.sentence_size], name='query')
+        
+        if mask:
+            mask = tf.expand_dims(mask, 1) # [batch_size, 1, sentence_size]
+            mask = tf.expand_dims(mask, 3) # [batch_size, 1, sentence_size, 1]
+            neg_mask = tf.abs(mask-1)
 
         with tf.variable_scope('MemN2N'):
             emb_q = self._query_embedding(query) # [batch_size, option_size, sentence_size, embed_size]
-            u = tf.reduce_sum(emb_q*self._encoding, 2) # [batch_size, option_size, embed_size]
+            if mask:
+                print('With position weight')
+                neg = tf.reduce_sum(emb_q * self._encoding * neg_mask, 2)
+                pos = tf.reduce_sum(emb_q * self._encoding * mask, 2)
+                u = neg * (1-self.position_weight) + pos * self.position_weight
+            else:
+                print('Without position weight')
+                u = tf.reduce_sum(emb_q*self._encoding, 2) # [batch_size, option_size, embed_size]
 
             for hop in range(self.n_hop):
                 emb_i = self._inputs_embedding(sentences, hop) # [batch_size, memory_size, sentence_size, embed_size]

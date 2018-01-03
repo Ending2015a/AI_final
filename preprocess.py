@@ -108,7 +108,7 @@ def parse_questions(lines):
             line = lines[i].split(' ', 1)[1]
             sent.append( filter(line) )
         last = [x for x in lines[-1].split('\t') if x!='' ]
-        q = filter(last[0].split(' ', 1)[1])
+        q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
         a = ''.join(ch for ch in last[1] if ch not in exc)
         option = []
         question_with_option = []
@@ -122,7 +122,7 @@ def parse_questions(lines):
         for x in raw_option:
             o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
             option.append(o)
-            o = q.replace(blank, o)
+            o = q.replace('<blank>', o)
             question_with_option.append(o)
 
         assert(len(sent) == 20)
@@ -135,7 +135,7 @@ def parse_questions(lines):
                     'question': q, 
                     'answer': a, 
                     'options': option,
-                    'q_with_o': question_with_option,
+                    'queries': question_with_option,
                     'index': idx}
         return question
 
@@ -180,6 +180,8 @@ def build_mapping(vocab, thres=50):
     for voc in ['<blank>', '<rare>']:
         enc_map, dec_map = add(enc_map, dec_map, voc)
     for voc, cnt in tqdm(vocab.items(), desc='map', ncols=80):
+        if voc in enc_map:
+            continue
         if cnt < thres:
             enc_map[voc] = enc_map['<rare>']
         else:
@@ -209,8 +211,14 @@ def encode_question(q, enc_map):
 
     enc_o = [encode(opt, enc_map) for opt in q['options']]
 
+    enc_mask = [0] * len(enc_q)
+    try:
+        enc_mask[enc_q.index(0)] = 1
+    except:
+        pass
+
     enc_qwo = []
-    for qwo in q['q_with_o']:
+    for qwo in q['queries']:
         ids = encode_str(qwo, enc_map)
         enc_qwo.append(ids)
 
@@ -218,8 +226,9 @@ def encode_question(q, enc_map):
             'question': enc_q,
             'answer': enc_a,
             'options': enc_o,
-            'q_with_o': enc_qwo,
-            'index': q['index']}
+            'queries': enc_qwo,
+            'index': q['index'],
+            'position_mask': enc_mask}
 
     return enc_q
 
@@ -233,7 +242,7 @@ def decode_question(q, dec_map):
     raw_o = [decode(opt, dec_map) for opt in q['options']]
 
     raw_qwo = []
-    for ids in q['q_with_o']:
+    for ids in q['queries']:
         qwo = decode_str(ids, dec_map)
         raw_qwo.append(qwo)
 
@@ -241,7 +250,7 @@ def decode_question(q, dec_map):
             'question': raw_q,
             'answer': raw_a,
             'options': raw_o,
-            'q_with_o': raw_qwo,
+            'queries': raw_qwo,
             'index': q['index']}
 
     return raw_q
@@ -267,7 +276,7 @@ def print_question(q):
     print('Q: ', q['question'])
     print('Opt: ', q['options'])
     print('A: ', q['answer'])
-    for idx, qwo in enumerate(q['q_with_o']):
+    for idx, qwo in enumerate(q['queries']):
         print('Opt{}: {}'.format(idx, qwo))
     print('ID: ', q['index'])
 
@@ -477,7 +486,7 @@ if __name__ == '__main__':
     print('  |-- questions (a string list, which is the original question)')
     print('  |-- answer (an string which is the answer of this question)')
     print('  |-- options (a string list, contains multiple options for this question)')
-    print('  |-- q_with_o (a string list, contains 10 lines of original questions with 10 different options filled in the blank)')
+    print('  |-- queries (a string list, contains 10 lines of original questions with 10 different options filled in the blank)')
     print('  |-- index (an integer, specifies the index of the correct option)')
 
 

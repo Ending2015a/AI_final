@@ -21,7 +21,7 @@ class Solver(object):
         self.learning_rate = kwargs.pop('learning_rate', 0.01)
         self.max_norm_clip = kwargs.pop('max_norm_clip', 40.0)
         self.decay_epoch = kwargs.pop('decay_epoch', 20)
-        self.decay_rate = kwargs.pop('decay_rate', 0.80)
+        self.decay_rate = kwargs.pop('decay_rate', 0.65)
 
         self.eval_epoch = kwargs.pop('eval_epoch', 0)
 
@@ -40,7 +40,7 @@ class Solver(object):
         self.train_record_path = kwargs.pop('train_record_path', './record/train/')
         self.val_record_path = kwargs.pop('val_record_path', './record/val/')
         self.train_examples = kwargs.pop('train_examples', 669343)
-        self.test_examples = kwargs.pop('test_examples', 10000)
+        self.test_examples = kwargs.pop('test_examples', 8000)
 
         #======= MODEL =========
         self.sentence_size = model.sentence_size
@@ -57,29 +57,32 @@ class Solver(object):
         def training_parser(record):
             keys_to_features = {
                 'sentences': tf.FixedLenFeature([self.sentence_size*self.memory_size], tf.int64),
-                'q_with_o': tf.FixedLenFeature([self.sentence_size*self.option_size], tf.int64),
-                'index': tf.FixedLenFeature([1], dtype=tf.int64)}
+                'queries': tf.FixedLenFeature([self.sentence_size*self.option_size], tf.int64),
+                'index': tf.FixedLenFeature([1], dtype=tf.int64),
+                'position_mask': tf.FixedLenFeature([self.sentence_size], dtype=tf.int64)}
 
             features = tf.parse_single_example(record, features=keys_to_features)
             sentences = features['sentences']
-            querys = features['q_with_o']
+            queries = features['queries']
             answer = features['index']
+            mask = features['position_mask']
 
             sentences = tf.reshape(sentences, [self.memory_size, self.sentence_size])
-            querys = tf.reshape(querys, [self.option_size, self.sentence_size])
+            queries = tf.reshape(queries, [self.option_size, self.sentence_size])
 
             records = {
                     'sentences': sentences,
-                    'q_with_o': querys,
-                    'index': answer}
+                    'queries': queries,
+                    'index': answer,
+                    'position_mask': mask}
             return records
 
         def tfrecord_iterator(filenames, batch_size, record_parser):
             dataset = tf.data.TFRecordDataset(filenames)
-            dataset = dataset.map(record_parser, num_parallel_calls=16)
+            dataset = dataset.map(record_parser, num_parallel_calls=32)
 
             dataset = dataset.repeat()
-            dataset = dataset.shuffle(batch_size*8)
+            dataset = dataset.shuffle(batch_size*3)
 
             dataset = dataset.batch(batch_size)
             iterator = dataset.make_initializable_iterator()
@@ -93,10 +96,11 @@ class Solver(object):
         records = iterator.get_next()
 
         sentences = tf.reshape(records['sentences'], [-1, self.memory_size, self.sentence_size])
-        querys = tf.reshape(records['q_with_o'], [-1, self.option_size, self.sentence_size])
+        queries = tf.reshape(records['queries'], [-1, self.option_size, self.sentence_size])
+        mask = tf.reshape(records['position_mask'], [-1, self.sentence_size])
         answers = records['index']
 
-        return iterator, sentences, querys, answers
+        return iterator, sentences, queries, mask, answers
 
 
     def build_dataset(self, data_list):
@@ -113,7 +117,7 @@ class Solver(object):
 
         for q in tqdm(data_list, desc='gen', ncols=80):
             sents = q['sentences']
-            qwos = q['q_with_o']
+            qwos = q['queries']
             idx = q['index']
 
             for i in range(len(sents)):
@@ -161,8 +165,8 @@ class Solver(object):
         print(' :: Generating Dataset...')
 
         # create training & testing dataset
-        train_iter, train_sent, train_query, train_answer = self.create_dataset(self.train_record_path);
-        test_iter, test_sent, test_query, test_answer = self.create_dataset(self.val_record_path);
+        train_iter, train_sent, train_query, train_mask, train_answer = self.create_dataset(self.train_record_path);
+        test_iter, test_sent, test_query, test_mask, test_answer = self.create_dataset(self.val_record_path);
 
         # training set info
         train_examples = self.train_examples
@@ -179,8 +183,8 @@ class Solver(object):
         print(' :: Building model...')
 
         # build model & sampler
-        train_handle, loss = self.model.build_model(train_sent, train_query, train_answer)
-        test_handle, generated_answer = self.model.build_sampler(test_sent, test_query)
+        train_handle, loss = self.model.build_model(train_sent, train_query, train_answer, train_mask)
+        test_handle, generated_answer = self.model.build_sampler(test_sent, test_query, test_mask)
 
         # create optimizer & apply gradients
         with tf.name_scope('optimizer'):
