@@ -91,7 +91,6 @@ class MemNet(object):
             u = tf.reduce_sum(emb_q*self._encoding, 2) # [batch_size, option_size, embed_size]
 
             onehot = tf.one_hot(answer, self.option_size) # [batch_size, option_size]
-            self.onehot=u
 
             for hop in range(self.n_hop):
                 emb_i = self._inputs_embedding(sentences, hop) # [batch_size, memory_size, sentence_size, embed_size]
@@ -120,6 +119,9 @@ class MemNet(object):
 
             cross_entropy = tf.nn.softmax_cross_entropy_with_logits(labels=onehot, logits=logits)
             loss = tf.reduce_mean(cross_entropy)
+            
+            self.onehot = logits
+
 
             class Handle(object):
                 pass
@@ -143,45 +145,31 @@ class MemNet(object):
 
         with tf.variable_scope('MemN2N'):
             emb_q = self._query_embedding(query) # [batch_size, option_size, sentence_size, embed_size]
-            #print('emb_q shape: ', emb_q.get_shape())
             u = tf.reduce_sum(emb_q*self._encoding, 2) # [batch_size, option_size, embed_size]
-            #print('u shape: ', u.get_shape())
 
             for hop in range(self.n_hop):
                 emb_i = self._inputs_embedding(sentences, hop) # [batch_size, memory_size, sentence_size, embed_size]
-                #print('emb_i shape: ', emb_i.get_shape())
                 mem_i = tf.reduce_sum(emb_i*self._encoding, 2) # [batch_size, memory_size, embed_size]
                 mem_i = tf.expand_dims(mem_i, 1) # [batch_size, 1, memory_size, embed_size]
-                #print('mem_i shape: ', mem_i.get_shape())
 
                 emb_o = self._outputs_embedding(sentences, hop) # same as emb_i
-                #print('emb_o shape: ', emb_o.get_shape())
                 mem_o = tf.reduce_sum(emb_o*self._encoding, 2) # same as mem_i
                 mem_o = tf.expand_dims(mem_o, 1) # [batch_size, 1, memory_size, embed_size]
-                #print('mem_o shape: ', mem_o.get_shape())
                 
                 uT = tf.transpose(tf.expand_dims(u, -1), [0, 1, 3, 2])
                 # [batch_size * option_size, embed_size, 1] -> [batch_size, option_size, 1, embed_size]
-                #print('uT shape: ', uT.get_shape())
 
                 p = tf.nn.softmax(tf.reduce_sum(mem_i*uT, 3)) # inner product [batch_size, option_size, memory_size]
-                #print('probs shape: ', p.get_shape())
-
                 p = tf.expand_dims(p, -1) # [batch_size, option_size, memory_size, 1]
-                #print('probsT shape: ', p.get_shape())
 
                 o = tf.reduce_sum(mem_o*p, 2) # [batch_size, option_size, embed_size]
-                #print('o shape: ', o.get_shape())
 
                 u = o + u # [batch_size, option_size, embed_size]
-                #print('u shape: ', u.get_shape())
 
             #logits = tf.nn.softmax(self._unembedding(u)) #a_hat [batch_size * option_size, vocab_size]
             a_hat = tf.reshape(u, [-1, self.option_size * self.embed_size]) # [batch_size, option_size * embed_size]
-            #print('a_hat shape: ', a_hat.get_shape())
 
             logits = self._fc(a_hat, self.option_size, 'fc2')
-            #print('logits shape: ', logits.get_shape())
 
             selection = tf.argmax(logits, 1)
 

@@ -26,6 +26,8 @@ class Solver(object):
         self.restore_path = kwargs.pop('restore_path', None)
         self.eval_epoch = kwargs.pop('eval_epoch', 0)
         self.summary_step = kwargs.pop('summary_step', 10)
+        self.max_norm_clip = kwargs.pop('max_norm_clip', 40.0)
+
 
         self.sentence_size = model.sentence_size
         self.option_size = model.option_size
@@ -83,39 +85,61 @@ class Solver(object):
 
         return sent_batch, qwo_batch, idx_batch
 
+    def gradient_noise(self, t, stddev=1e-3, name=None):
+        t = tf.convert_to_tensor(t)
+        gn = tf.random_normal(tf.shape(t), stddev=stddev)
+        return tf.add(t, gn, name)
+
     def train(self):
 
+        # create global step
         global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
         
+        # build dataset
         print('Generating Dataset...')
         print('This may take a while...')
         train_sent, train_query, train_answer = self.build_dataset(self.data['train']);
         test_sent, test_query, test_answer = self.build_dataset(self.data['val']);
 
-        # train dataset
+        # training set info
         n_examples = len(self.data['train'])
         n_iters_per_epoch = int(np.ceil(float(n_examples)/self.batch_size))
 
+        # validation set info
         test_examples = len(self.data['val'])
         test_iters_per_epoch = int(np.ceil(float(test_examples)/self.batch_size))
 
+        # reduce memory consumption
         del self.data
 
         print('DONE !!')
 
         print('Building model...')
 
+        # build model & sampler
         train_handle, loss = self.model.build_model(train_sent, train_query, train_answer)
         test_handle, generated_answer = self.model.build_sampler(test_sent, test_query)
 
+        # create optimizer & apply gradients
         with tf.name_scope('optimizer'):
+
+            # please refer the original paper
             optimizer = tf.train.GradientDescentOptimizer(learning_rate = self.learning_rate)
             grads = optimizer.compute_gradients(loss)
+
+            # clip norm, without this, the gradients will be too large and crash the network
+            # please refer the original paper section 4.2
+            grads = [(tf.clip_by_norm(grad, self.max_norm_clip), var) for grad, var in grads]
+            grads = [(self.gradient_noise(grad), var) for grad, var in grads] # add random noise
+
+            # add to summary
             for grad, var in grads:
                 if grad is not None:
                     tf.summary.histogram(var.op.name + '/gradient', grad)
+            # apply gradients
             train_op = optimizer.apply_gradients(grads, global_step=global_step)
 
+        # add to summary
         tf.summary.scalar('batch_loss', loss)
         for var in tf.trainable_variables():
             tf.summary.histogram(var.op.name, var)
@@ -125,10 +149,12 @@ class Solver(object):
         print('DONE !!')
 
         print('======= INFO =======')
-        print('The number of epoch: ', self.n_epochs)
-        print('Data size: ', n_examples)
-        print('Batch_size', self.batch_size)
-        print('Iterations per epoch: ', n_iters_per_epoch)
+        print('Total epochs for training: ', self.n_epochs)
+        print('Batch size: ', self.batch_size)
+        print('Training data size: ', n_examples)
+        print("Testing data size: ", test_examples)
+        print('Total training iterations per epoch: ', n_iters_per_epoch)
+        print('Total testing iterations per epoch: ', test_iters_per_epoch)
         print('')
 
         print('Start Session...')
@@ -169,9 +195,9 @@ class Solver(object):
 
                         curr_loss += loss_
 
-                        #if (i+1) % self.summary_step == 0:
-                        #    summary = sess.run(summary_op)
-                        #    summary_writer.add_summary(summary, global_step=step_)
+                        if (i+1) % self.summary_step == 0:
+                            summary = sess.run(summary_op)
+                            summary_writer.add_summary(summary, global_step=step_)
 
                         if (i+1) % self.print_step == 0:
                             elapsed_iter_time = time.time() - start_iter_time
