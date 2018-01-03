@@ -14,6 +14,7 @@ class Solver(object):
         self.data = data
         self.enc_map = enc_map
         self.dec_map = dec_map
+        self.dec_map[0] = ''
 
         self.n_epochs = kwargs.pop('n_epochs', 500)
         self.batch_size = kwargs.pop('batch_size', 100)
@@ -81,7 +82,6 @@ class Solver(object):
                 min_after_dequeue = self.batch_size * 2)
 
         return sent_batch, qwo_batch, idx_batch
-
 
     def train(self):
 
@@ -164,19 +164,20 @@ class Solver(object):
                     start_iter_time = time.time()
                     for i in range(n_iters_per_epoch):
 
-                        op = [global_step, train_handle.query, train_handle.selection, train_handle.answer, loss, train_op]
-                        step_, q_, s_, a_, loss_, _ = sess.run(op)
+                        op = [global_step, train_handle.query, train_handle.selection, train_handle.answer, self.model.onehot, loss, train_op]
+                        step_, q_, s_, a_, de_, loss_, _ = sess.run(op)
 
                         curr_loss += loss_
 
-                        if (i+1) % self.summary_step == 0:
-                            summary = sess.run(summary_op)
-                            summary_writer.add_summary(summary, global_step=step_)
+                        #if (i+1) % self.summary_step == 0:
+                        #    summary = sess.run(summary_op)
+                        #    summary_writer.add_summary(summary, global_step=step_)
 
                         if (i+1) % self.print_step == 0:
                             elapsed_iter_time = time.time() - start_iter_time
-                            print('[epoch {} | iter {}/{} | step {} | save point {}] loss: {:.5f}, elapsed time: {:.4f}'.format(
-                                    e+1, i+1, n_iters_per_epoch, step_, save_point, loss_, elapsed_iter_time))
+                            #print('[epoch {} | iter {}/{} | step {} | save point {}] loss: {:.5f}, elapsed time: {:.4f}'.format(
+                            #        e+1, i+1, n_iters_per_epoch, step_, save_point, loss_, elapsed_iter_time))
+                            print(de_)
 
                             _selection = decode_str(q_[0][int(s_[0])], self.dec_map)
                             _answer = decode_str(q_[0][int(a_[0])], self.dec_map)
