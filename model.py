@@ -88,14 +88,15 @@ class MemNet(object):
         if answer == None:
             answer = tf.placeholder(tf.int32, [None], name='answer')
 
-        if mask:
+        if mask != None:
             mask = tf.expand_dims(mask, 1) # [batch_size, 1, sentence_size]
             mask = tf.expand_dims(mask, 3) # [batch_size, 1, sentence_size, 1]
+            mask = tf.to_float(mask)
             neg_mask = tf.abs(mask-1)
 
         with tf.variable_scope('MemN2N'):
             emb_q = self._query_embedding(query) # [batch_size, option_size, sentence_size, embed_size]
-            if mask:
+            if mask != None:
                 print('With position weight')
                 neg = tf.reduce_sum(emb_q * self._encoding * neg_mask, 2)
                 pos = tf.reduce_sum(emb_q * self._encoding * mask, 2)
@@ -157,14 +158,15 @@ class MemNet(object):
         if query == None:
             query = tf.placeholder(tf.int32, [None, self.option_size, self.sentence_size], name='query')
         
-        if mask:
+        if mask != None:
             mask = tf.expand_dims(mask, 1) # [batch_size, 1, sentence_size]
             mask = tf.expand_dims(mask, 3) # [batch_size, 1, sentence_size, 1]
+            mask = tf.to_float(mask)
             neg_mask = tf.abs(mask-1)
 
         with tf.variable_scope('MemN2N'):
             emb_q = self._query_embedding(query) # [batch_size, option_size, sentence_size, embed_size]
-            if mask:
+            if mask != None:
                 print('With position weight')
                 neg = tf.reduce_sum(emb_q * self._encoding * neg_mask, 2)
                 pos = tf.reduce_sum(emb_q * self._encoding * mask, 2)
