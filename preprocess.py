@@ -108,15 +108,26 @@ def parse_questions(lines):
             line = lines[i].split(' ', 1)[1]
             sent.append( filter(line) )
         last = [x for x in lines[-1].split('\t') if x!='' ]
-        q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
+        q = filter(last[0].split(' ', 1)[1])
         a = ''.join(ch for ch in last[1] if ch not in exc)
         option = []
         question_with_option = []
-        for x in last[2].split('|'):
+
+        raw_option = last[2].split('|')
+        if len(raw_option) > 10:
+            raw_option = raw_option[0:10]
+        elif len(raw_option) < 10:
+            raw_option = raw_option + ['']*(10-len(raw_option))
+
+        for x in raw_option:
             o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
             option.append(o)
-            o = q.replace('<blank>', o)
+            o = q.replace(blank, o)
             question_with_option.append(o)
+
+        assert(len(sent) == 20)
+        assert(len(option) == 10)
+
 
         idx = option.index(a)
 

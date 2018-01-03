@@ -8,34 +8,96 @@ from tqdm import trange
 from preprocess import decode_str
 
 class Solver(object):
-    def __init__(self, model, data, enc_map, dec_map, **kwargs):
+    def __init__(self, model, enc_map, dec_map, **kwargs):
 
         self.model = model
-        self.data = data
         self.enc_map = enc_map
         self.dec_map = dec_map
         self.dec_map[0] = ''
 
+        #======= TRAINING ARGUMENTS =====
         self.n_epochs = kwargs.pop('n_epochs', 500)
         self.batch_size = kwargs.pop('batch_size', 100)
         self.learning_rate = kwargs.pop('learning_rate', 0.01)
+        self.max_norm_clip = kwargs.pop('max_norm_clip', 40.0)
+        self.decay_epoch = kwargs.pop('decay_epoch', 20)
+        self.decay_rate = kwargs.pop('decay_rate', 0.80)
+
+        self.eval_epoch = kwargs.pop('eval_epoch', 0)
+
+        #======= LOGGING ARGUMENTS ======
         self.save_epoch = kwargs.pop('save_epoch', 1)
         self.print_step = kwargs.pop('print_step', 5)
+        self.summary_step = kwargs.pop('summary_step', 10)
+        self.print_n_words = kwargs.pop('print_n_words', 20)
+
+        #======= LOGGING PATH =======
         self.log_path = kwargs.pop('log_path', './log/')
         self.model_path = kwargs.pop('model_path', './model/')
         self.restore_path = kwargs.pop('restore_path', None)
-        self.eval_epoch = kwargs.pop('eval_epoch', 0)
-        self.summary_step = kwargs.pop('summary_step', 10)
-        self.max_norm_clip = kwargs.pop('max_norm_clip', 40.0)
-        self.print_n_words = kwargs.pop('print_n_words', 20)
 
+        #======= DATASET ========
+        self.train_record_path = kwargs.pop('train_record_path', './record/train/')
+        self.val_record_path = kwargs.pop('val_record_path', './record/val/')
+        self.train_examples = kwargs.pop('train_examples', 669343)
+        self.test_examples = kwargs.pop('test_examples', 10000)
+
+        #======= MODEL =========
         self.sentence_size = model.sentence_size
+        self.memory_size = model.memory_size
         self.option_size = model.option_size
+
 
         if not os.path.exists(self.model_path):
             os.makedirs(self.model_path)
         if not os.path.exists(self.log_path):
             os.makedirs(self.log_path)
+
+    def create_dataset(self, record_path):
+        def training_parser(record):
+            keys_to_features = {
+                'sentences': tf.FixedLenFeature([self.sentence_size*self.memory_size], tf.int64),
+                'q_with_o': tf.FixedLenFeature([self.sentence_size*self.option_size], tf.int64),
+                'index': tf.FixedLenFeature([1], dtype=tf.int64)}
+
+            features = tf.parse_single_example(record, features=keys_to_features)
+            sentences = features['sentences']
+            querys = features['q_with_o']
+            answer = features['index']
+
+            sentences = tf.reshape(sentences, [self.memory_size, self.sentence_size])
+            querys = tf.reshape(querys, [self.option_size, self.sentence_size])
+
+            records = {
+                    'sentences': sentences,
+                    'q_with_o': querys,
+                    'index': answer}
+            return records
+
+        def tfrecord_iterator(filenames, batch_size, record_parser):
+            dataset = tf.data.TFRecordDataset(filenames)
+            dataset = dataset.map(record_parser, num_parallel_calls=16)
+
+            dataset = dataset.repeat()
+            dataset = dataset.shuffle(batch_size*8)
+
+            dataset = dataset.batch(batch_size)
+            iterator = dataset.make_initializable_iterator()
+            output_types = dataset.output_types
+            output_shapes = dataset.output_shapes
+
+            return iterator, output_types, output_shapes
+
+        filenames = [os.path.join(record_path, x) for x in os.listdir(record_path)]
+        iterator, types, shapes = tfrecord_iterator(filenames, self.batch_size, training_parser)
+        records = iterator.get_next()
+
+        sentences = tf.reshape(records['sentences'], [-1, self.memory_size, self.sentence_size])
+        querys = tf.reshape(records['q_with_o'], [-1, self.option_size, self.sentence_size])
+        answers = records['index']
+
+        return iterator, sentences, querys, answers
+
 
     def build_dataset(self, data_list):
         def padding_sentence(sentence, size, padding_word=0):
@@ -96,25 +158,25 @@ class Solver(object):
         global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
         
         # build dataset
-        print('Generating Dataset...')
-        print('This may take a while...')
-        train_sent, train_query, train_answer = self.build_dataset(self.data['train']);
-        test_sent, test_query, test_answer = self.build_dataset(self.data['val']);
+        print(' :: Generating Dataset...')
+
+        # create training & testing dataset
+        train_iter, train_sent, train_query, train_answer = self.create_dataset(self.train_record_path);
+        test_iter, test_sent, test_query, test_answer = self.create_dataset(self.val_record_path);
 
         # training set info
-        n_examples = len(self.data['train'])
-        n_iters_per_epoch = int(np.ceil(float(n_examples)/self.batch_size))
+        train_examples = self.train_examples
+        train_iters_per_epoch = int(np.ceil(float(train_examples)/self.batch_size))
 
         # validation set info
-        test_examples = len(self.data['val'])
+        test_examples = self.test_examples
         test_iters_per_epoch = int(np.ceil(float(test_examples)/self.batch_size))
 
         # reduce memory consumption
-        del self.data
 
-        print('DONE !!')
+        print('     DONE !!')
 
-        print('Building model...')
+        print(' :: Building model...')
 
         # build model & sampler
         train_handle, loss = self.model.build_model(train_sent, train_query, train_answer)
@@ -123,8 +185,12 @@ class Solver(object):
         # create optimizer & apply gradients
         with tf.name_scope('optimizer'):
 
+            decay_steps = self.decay_epoch * train_iters_per_epoch
+            # create learning rate with exponential decay
+            learning_rate = tf.train.exponential_decay(self.learning_rate, global_step, decay_steps, self.decay_rate)
+
             # please refer the original paper
-            optimizer = tf.train.GradientDescentOptimizer(learning_rate = self.learning_rate)
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
             grads = optimizer.compute_gradients(loss)
 
             # clip norm, without this, the gradients will be too large and crash the network
@@ -146,52 +212,56 @@ class Solver(object):
 
         summary_op = tf.summary.merge_all()
 
-        print('DONE !!')
+        print('     DONE !!\n')
 
-        print('======= INFO =======')
-        print('Total epochs for training: ', self.n_epochs)
-        print('Batch size: ', self.batch_size)
-        print('Training data size: ', n_examples)
-        print("Testing data size: ", test_examples)
-        print('Total training iterations per epoch: ', n_iters_per_epoch)
-        print('Total testing iterations per epoch: ', test_iters_per_epoch)
+        print(' ======= INFO =======')
+        print(' :: Total epochs for training: ', self.n_epochs)
+        print(' :: Batch size: ', self.batch_size)
+        print(' :: Training data size: ', train_examples)
+        print(" :: Testing data size: ", test_examples)
+        print(' :: Total training iterations per epoch: ', train_iters_per_epoch)
+        print(' :: Total testing iterations per epoch: ', test_iters_per_epoch)
         print('')
 
-        print('Start Session...')
+        print(' :: Start Session...')
         config = tf.ConfigProto(allow_soft_placement = True)
         config.gpu_options.allow_growth = True
+
         with tf.Session(config=config) as sess:
             sess.run(tf.global_variables_initializer())
             summary_writer = tf.summary.FileWriter(self.log_path, graph=tf.get_default_graph())
             saver = tf.train.Saver(var_list=tf.global_variables(), max_to_keep=10)
 
-            print('Start queue runners...')
+            print(' :: Start queue runners...')
             coord = tf.train.Coordinator()
             threads = tf.train.start_queue_runners(coord=coord, sess=sess)
 
-            print('Try to restore model...')
+            print(' :: Try to restore model...')
             if self.restore_path is not None:
                 latest_ckpt = tf.train.latest_checkpoint(self.restore_path)
                 if not latest_ckpt:
-                    print('Not found any checkpoint in ', self.restore_path)
+                    print('    [Not found] any checkpoint in ', self.restore_path)
                 else:
-                    print('Found pretrained model ', latest_ckpt)
+                    print('    [Found] pretrained model ', latest_ckpt)
                     saver.restore(sess, latest_ckpt)
+
+            sess.run(train_iter.initializer)
+            sess.run(test_iter.initializer)
 
             prev_loss = -1
             curr_loss = 0
 
-            print('Start training !!!')
+            print(' :: Start training !!!')
 
             try:
                 save_point = 0
                 for e in range(self.n_epochs):
                     start_epoch_time = time.time()
                     start_iter_time = time.time()
-                    for i in range(n_iters_per_epoch):
+                    for i in range(train_iters_per_epoch):
 
-                        op = [global_step, train_handle.query, train_handle.selection, train_handle.answer, loss, train_op]
-                        step_, q_, s_, a_, loss_, _ = sess.run(op)
+                        op = [global_step, train_handle.query, train_handle.selection, train_handle.answer, learning_rate, loss, train_op]
+                        step_, q_, s_, a_, lr_, loss_, _ = sess.run(op)
 
                         curr_loss += loss_
 
@@ -201,22 +271,44 @@ class Solver(object):
 
                         if (i+1) % self.print_step == 0:
                             elapsed_iter_time = time.time() - start_iter_time
-                            print('[epoch {} | iter {}/{} | step {} | save point {}] loss: {:.5f}, elapsed time: {:.4f}'.format(
-                                    e+1, i+1, n_iters_per_epoch, step_, save_point, loss_, elapsed_iter_time))
+                            print('[epoch {} | iter {}/{} | step {} | save point {}] learning rate: {:.5f}, loss: {:.5f}, elapsed time: {:.4f} s \n'.format(
+                                    e+1, i+1, train_iters_per_epoch, int(step_)+1, save_point, lr_, loss_, elapsed_iter_time))
 
                             _selection = decode_str(q_[0][int(s_[0])][:self.print_n_words], self.dec_map)
                             _answer = decode_str(q_[0][int(a_[0])][:self.print_n_words], self.dec_map)
 
                             print('  Answer: {}, {}'.format(int(a_[0]), _answer))
-                            print('  Select: {}, {}'.format(int(s_[0]), _selection))
+                            print('  Select: {}, {}\n'.format(int(s_[0]), _selection))
 
                             start_iter_time = time.time()
 
-                    print('  [epoch {0} | iter {1}/{1} | step {2} | save point {6}] End. prev loss: {3:.5f}, cur loss: {4:.5f}, elapsed time: {5:.4f}'.format(
-                                e+1, n_iters_per_epoch, step_, prev_loss, curr_loss, time.time() - start_epoch_time, save_point))
+                    print('  [epoch {0} | iter {1}/{1} | step {2} | save point {6}] End. prev loss: {3:.5f}, cur loss: {4:.5f}, elapsed time: {5:.4f} s\n'.format(
+                                e+1, train_iters_per_epoch, int(step_)+1, prev_loss, curr_loss, time.time() - start_epoch_time, save_point))
 
                     prev_loss = curr_loss
                     curr_loss = 0
+
+
+                    if (e+1) % self.eval_epoch == 0:
+                        total_correct = 0
+                        total_wrong = 0
+                        for i in range(test_iters_per_epoch):
+                            op = [test_handle.selection, test_answer]
+                            s_, a_ = sess.run(op)
+
+                            s_ = np.array(s_)
+                            a_ = np.array(a_)
+
+                            correct = np.sum(s_ == a_)
+                            wrong = np.sum(s_ != a_)
+                            if (i+1) % self.print_step == 0:                            
+                                print('[eval] [epoch {} | iter {}/{} | save point {}] correct: {}, wrong: {}'.format(
+                                        e+1, i+1, test_iters_per_epoch, save_point, correct, wrong))
+                            total_correct += correct
+                            total_wrong += wrong
+
+                        accuracy = float(total_correct) / float(total_correct + total_wrong)
+                        print('\n[eval] [epoch {} | save point {}] total C/W: {}/{}, accuracy: {:.4f}\n'.format(e+1, save_point, total_correct, total_wrong, accuracy))
 
 
                     if (e+1) % self.save_epoch == 0:

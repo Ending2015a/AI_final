@@ -21,9 +21,14 @@ unzip AI_Course_Final.zip
 ```
 python3 preprocess.py -p all
 ```
-4. Configure network settings by modifying train.py
+4. Run create_tfrecord.py to generate tfrecord.
+```
+python3 create_tfrecord.py
+```
 
-5. Start training
+5. Configure network settings by modifying train.py
+
+6. Start training
 ```
 python3 train.py
 ```
