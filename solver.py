@@ -27,7 +27,7 @@ class Solver(object):
         self.eval_epoch = kwargs.pop('eval_epoch', 0)
         self.summary_step = kwargs.pop('summary_step', 10)
         self.max_norm_clip = kwargs.pop('max_norm_clip', 40.0)
-
+        self.print_n_words = kwargs.pop('print_n_words', 20)
 
         self.sentence_size = model.sentence_size
         self.option_size = model.option_size
@@ -190,8 +190,8 @@ class Solver(object):
                     start_iter_time = time.time()
                     for i in range(n_iters_per_epoch):
 
-                        op = [global_step, train_handle.query, train_handle.selection, train_handle.answer, self.model.onehot, loss, train_op]
-                        step_, q_, s_, a_, de_, loss_, _ = sess.run(op)
+                        op = [global_step, train_handle.query, train_handle.selection, train_handle.answer, loss, train_op]
+                        step_, q_, s_, a_, loss_, _ = sess.run(op)
 
                         curr_loss += loss_
 
@@ -201,12 +201,11 @@ class Solver(object):
 
                         if (i+1) % self.print_step == 0:
                             elapsed_iter_time = time.time() - start_iter_time
-                            #print('[epoch {} | iter {}/{} | step {} | save point {}] loss: {:.5f}, elapsed time: {:.4f}'.format(
-                            #        e+1, i+1, n_iters_per_epoch, step_, save_point, loss_, elapsed_iter_time))
-                            print(de_)
+                            print('[epoch {} | iter {}/{} | step {} | save point {}] loss: {:.5f}, elapsed time: {:.4f}'.format(
+                                    e+1, i+1, n_iters_per_epoch, step_, save_point, loss_, elapsed_iter_time))
 
-                            _selection = decode_str(q_[0][int(s_[0])], self.dec_map)
-                            _answer = decode_str(q_[0][int(a_[0])], self.dec_map)
+                            _selection = decode_str(q_[0][int(s_[0])][:self.print_n_words], self.dec_map)
+                            _answer = decode_str(q_[0][int(a_[0])][:self.print_n_words], self.dec_map)
 
                             print('  Answer: {}, {}'.format(int(a_[0]), _answer))
                             print('  Select: {}, {}'.format(int(s_[0]), _selection))
