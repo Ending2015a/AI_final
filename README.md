@@ -3,6 +3,7 @@
 * Python 3
 * tensorflow
 * tqdm
+
 Install by pip
 ```
 pip install -r requirements.txt
