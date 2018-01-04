@@ -344,4 +344,84 @@ class Solver(object):
 
 
     def test(self):
-        pass
+        # create global step
+        global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
+        
+        # build dataset
+        print(' :: Generating Dataset...')
+
+        # create testing dataset
+        test_iter, test_sent, test_query, test_mask, test_answer = self.create_dataset(self.test_record_path);
+
+        # validation set info
+        test_examples = self.test_examples
+        test_iters_per_epoch = int(np.ceil(float(test_examples)/self.eval_batch_size))
+
+        # reduce memory consumption
+
+        print('     DONE !!')
+
+        print(' :: Building model...')
+
+        # build model & sampler
+        test_handle, generated_answer = self.model.build_sampler(test_sent, test_query, test_mask)
+
+        print('     DONE !!\n')
+
+        print(' ======= INFO =======')
+        print(' :: Eval batch size: ', self.eval_batch_size)
+        print(" :: Testing data size: ", test_examples)
+        print(' :: Total testing iterations per epoch: ', test_iters_per_epoch)
+        print('')
+
+        print(' :: Start Session...')
+        config = tf.ConfigProto(allow_soft_placement = True)
+        config.gpu_options.allow_growth = True
+
+        with tf.Session(config=config) as sess:
+            sess.run(tf.global_variables_initializer())
+            summary_writer = tf.summary.FileWriter(self.log_path, graph=tf.get_default_graph())
+            saver = tf.train.Saver(var_list=tf.global_variables(), max_to_keep=10)
+
+            print(' :: Start queue runners...')
+            coord = tf.train.Coordinator()
+            threads = tf.train.start_queue_runners(coord=coord, sess=sess)
+
+            print(' :: Try to restore model...')
+            if self.restore_path is not None:
+                latest_ckpt = tf.train.latest_checkpoint(self.restore_path)
+                if not latest_ckpt:
+                    print('    [Not found] any checkpoint in ', self.restore_path)
+                else:
+                    print('    [Found] pretrained model ', latest_ckpt)
+                    saver.restore(sess, latest_ckpt)
+
+            sess.run(test_iter.initializer)
+
+            print(' :: Start testing !!!')
+
+
+            total_correct = 0
+            total_wrong = 0
+            for i in range(test_iters_per_epoch):
+                op = [val_handle.selection, val_answer]
+                s_, a_ = sess.run(op)
+
+                s_ = np.array(s_).reshape(-1)
+                a_ = np.array(a_).reshape(-1)
+
+                correct = np.sum(s_ == a_)
+                wrong = np.sum(s_ != a_)
+                if (i+1) % self.print_step == 0:                            
+                    print('[eval] [epoch {} | iter {}/{} | save point {}] correct: {}, wrong: {}'.format(
+                                    e+1, i+1, val_iters_per_epoch, save_point, correct, wrong))
+                total_correct += correct
+                total_wrong += wrong
+
+            accuracy = float(total_correct) / float(total_correct + total_wrong)
+            print('\n[eval] [epoch {} | save point {}] total O/X: {}/{}, accuracy: {:.4f}\n'.format(e+1, save_point, total_correct, total_wrong, accuracy))
+
+            coord.request_stop()
+            coord.join(threads)
+
+

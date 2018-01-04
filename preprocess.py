@@ -94,11 +94,44 @@ def read_data(filename):
 
     return lines
 
-def parse_questions(lines):
+def parse_21th(line, with_answer=True):
+    last = [x for x in line.split('\t') if x!='']
+    q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
+    option = []
+    question_with_option = []
+
+    if with_answer:
+        a = ''.join(ch for ch in last[1] if ch not in exc)
+        raw_option = last[2].split('|')
+    else:
+        a = ''
+        raw_option = last[1].split('|')
+    if len(raw_option) > 10:
+        raw_option = raw_option[0:10]
+    elif len(raw_option) < 10:
+        raw_option = raw_option + ['']*(10-raw_option)
+
+    for x in raw_option:
+        o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
+        option.append(o)
+        o = q.replace('<blank>', o)
+        question_with_option.append(o)
+
+    assert(len(sent) == 20)
+    assert(len(option) == 10)
+
+    if with_answer:
+        idx = option.index(a)
+    else:
+        idx = 0
+
+    return q, a, option, question_with_option, idx
+
+def parse_questions(lines, with_answer=True):
     question_list = []
     assert(len(lines) % 21 == 0)
     exc = set(string.punctuation)
-    def parse(lines):
+    def parse(lines, with_answer):
         sent = []
         def filter(line):
             line = ''.join(ch if ch not in exc else ' ' for ch in line)
@@ -108,28 +141,8 @@ def parse_questions(lines):
             line = lines[i].split(' ', 1)[1]
             sent.append( filter(line) )
         last = [x for x in lines[-1].split('\t') if x!='' ]
-        q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
-        a = ''.join(ch for ch in last[1] if ch not in exc)
-        option = []
-        question_with_option = []
 
-        raw_option = last[2].split('|')
-        if len(raw_option) > 10:
-            raw_option = raw_option[0:10]
-        elif len(raw_option) < 10:
-            raw_option = raw_option + ['']*(10-len(raw_option))
-
-        for x in raw_option:
-            o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
-            option.append(o)
-            o = q.replace('<blank>', o)
-            question_with_option.append(o)
-
-        assert(len(sent) == 20)
-        assert(len(option) == 10)
-
-
-        idx = option.index(a)
+        q, a, option, question_with_option, idx = parse_21th(lines[-1], with_answer)
 
         question = {'sentences': sent, 
                     'question': q, 
@@ -140,7 +153,7 @@ def parse_questions(lines):
         return question
 
     for i in trange(len(lines) // 21, desc='Parsing', ncols=80):
-        question_list.append(parse(lines[ i*21 : (i+1)*21]))
+        question_list.append(parse(lines[ i*21 : (i+1)*21], with_answer))
 
     return question_list
 
@@ -257,13 +270,13 @@ def decode_question(q, dec_map):
 
 def encode(word, e_map):
     word = word.lower()
-    return e_map[word]
+    return e_map[word] if word in e_map else e_map['<rare>']
 
 def decode(ids, d_map):
     return d_map[ids]
 
 def encode_str(sent, e_map):
-    ids = [e_map[x.lower()] for x in sent.split() if x.lower() in e_map ]
+    ids = [e_map[x.lower()] if x.lower() in e_map else e_map['<rare>'] for x in sent.split()]
     return ids
 
 def decode_str(ids, d_map):
@@ -298,6 +311,28 @@ def extract_questions(q, total_sent=0, total_q_size=0, max_sent_size=0, avg_sent
     return total_sent, total_q_size, max_sent_size, avg_sent_size, max_query_size, avg_query_size
 
 
+def crop_or_pad(sentence, size, padding_word=0):
+    length = len(sentence)
+    crop = max(length-size, 0)
+    pad = max(size-length, 0)
+    sentence = sentence[0:length-crop] + [padding_word] * pad
+    return sentence
+
+def parse_input_data_list(lines, enc_map, sentence_size, with_answer=False):
+    lines = [line for line in lines if is_int(line.split(' ', 1)[0]) ]
+    question_list = parse_question(lines, with_answer)
+    enc_questions = encode_questions(question_list, enc_map)
+
+    padded_enc = []
+    for q in enc_question:
+        q['queries'] = [ crop_or_pad(qr, sentence_size) for qr in q['queries']]
+        q['sentences'] = [ crop_or_pad(sent, sentence_size) for sent in q['sentences']]
+        q['index'] = [q['index']]
+        q['position_mask'] = crop_or_pad(q['position_mask'], sentence_size)
+
+        padded_enc.append(q)
+
+    return padded_enc
 
 if __name__ == '__main__':
 
@@ -365,8 +400,8 @@ if __name__ == '__main__':
 
         enc_map, dec_map = build_mapping(vocab, vocab_threshold)
 
-        print('Encode map size: {}/{} (actual/expected)'.format(len(enc_map), vocab_size+3))
-        print('Decode map size: {}/{} (actual/expected)'.format(len(dec_map), vocab_thres_size+3))
+        print('Encode map size: {}/{} (actual/expected)'.format(len(enc_map), vocab_size+1))
+        print('Decode map size: {}/{} (actual/expected)'.format(len(dec_map), vocab_thres_size+1))
 
         print('Save encode map to {}'.format(encode_map_path))
         cPickle.dump(enc_map, open(encode_map_path, 'wb'))
