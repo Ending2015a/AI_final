@@ -22,8 +22,10 @@ class Solver(object):
         self.max_norm_clip = kwargs.pop('max_norm_clip', 40.0)
         self.decay_epoch = kwargs.pop('decay_epoch', 20)
         self.decay_rate = kwargs.pop('decay_rate', 0.65)
+        self.val_epoch = kwargs.pop('val_epoch', 1)
 
-        self.eval_epoch = kwargs.pop('eval_epoch', 0)
+        #===== EVALUATION ARGUMENTS =====
+        self.eval_batch_size = kwargs.pop('eval_batch_size', 64)
 
         #======= LOGGING ARGUMENTS ======
         self.save_epoch = kwargs.pop('save_epoch', 1)
@@ -39,8 +41,11 @@ class Solver(object):
         #======= DATASET ========
         self.train_record_path = kwargs.pop('train_record_path', './record/train/')
         self.val_record_path = kwargs.pop('val_record_path', './record/val/')
+        self.test_record_path = kwargs.pop('test_record_path', './record/test/')
         self.train_examples = kwargs.pop('train_examples', 669343)
-        self.test_examples = kwargs.pop('test_examples', 8000)
+        self.val_examples = kwargs.pop('val_examples', 8000)
+        self.test_examples = kwargs.pop('test_examples', 10000)
+
 
         #======= MODEL =========
         self.sentence_size = model.sentence_size
@@ -166,15 +171,15 @@ class Solver(object):
 
         # create training & testing dataset
         train_iter, train_sent, train_query, train_mask, train_answer = self.create_dataset(self.train_record_path);
-        test_iter, test_sent, test_query, test_mask, test_answer = self.create_dataset(self.val_record_path);
+        val_iter, val_sent, val_query, val_mask, val_answer = self.create_dataset(self.val_record_path);
 
         # training set info
         train_examples = self.train_examples
         train_iters_per_epoch = int(np.ceil(float(train_examples)/self.batch_size))
 
         # validation set info
-        test_examples = self.test_examples
-        test_iters_per_epoch = int(np.ceil(float(test_examples)/self.batch_size))
+        val_examples = self.val_examples
+        val_iters_per_epoch = int(np.ceil(float(val_examples)/self.batch_size))
 
         # reduce memory consumption
 
@@ -184,7 +189,7 @@ class Solver(object):
 
         # build model & sampler
         train_handle, loss = self.model.build_model(train_sent, train_query, train_answer, train_mask)
-        test_handle, generated_answer = self.model.build_sampler(test_sent, test_query, test_mask)
+        val_handle, generated_answer = self.model.build_sampler(val_sent, val_query, val_mask)
 
         # create optimizer & apply gradients
         with tf.name_scope('optimizer'):
@@ -222,9 +227,9 @@ class Solver(object):
         print(' :: Total epochs for training: ', self.n_epochs)
         print(' :: Batch size: ', self.batch_size)
         print(' :: Training data size: ', train_examples)
-        print(" :: Testing data size: ", test_examples)
+        print(" :: Validation data size: ", val_examples)
         print(' :: Total training iterations per epoch: ', train_iters_per_epoch)
-        print(' :: Total testing iterations per epoch: ', test_iters_per_epoch)
+        print(' :: Total validation iterations per epoch: ', val_iters_per_epoch)
         print('')
 
         print(' :: Start Session...')
@@ -250,7 +255,7 @@ class Solver(object):
                     saver.restore(sess, latest_ckpt)
 
             sess.run(train_iter.initializer)
-            sess.run(test_iter.initializer)
+            sess.run(val_iter.initializer)
 
             prev_loss = -1
             curr_loss = 0
@@ -275,8 +280,14 @@ class Solver(object):
 
                         if (i+1) % self.print_step == 0:
                             elapsed_iter_time = time.time() - start_iter_time
-                            print('[epoch {} | iter {}/{} | step {} | save point {}] learning rate: {:.5f}, loss: {:.5f}, elapsed time: {:.4f} s \n'.format(
-                                    e+1, i+1, train_iters_per_epoch, int(step_)+1, save_point, lr_, loss_, elapsed_iter_time))
+
+                            flat_s_ = np.array(s_).reshape(-1)
+                            flat_a_ = np.array(a_).reshape(-1)
+
+                            accuracy_ = np.sum(flat_s_ == flat_a_) / float(self.batch_size)
+
+                            print('[epoch {} | iter {}/{} | step {} | save point {}] learning rate: {:.5f}, loss: {:.5f}, accuracy: {:.4f}, elapsed time: {:.4f} s \n'.format(
+                                    e+1, i+1, train_iters_per_epoch, int(step_)+1, int(save_point), lr_, loss_, accuracy_, elapsed_iter_time))
 
                             _selection = decode_str(q_[0][int(s_[0])][:self.print_n_words], self.dec_map)
                             _answer = decode_str(q_[0][int(a_[0])][:self.print_n_words], self.dec_map)
@@ -293,21 +304,21 @@ class Solver(object):
                     curr_loss = 0
 
 
-                    if (e+1) % self.eval_epoch == 0:
+                    if (e+1) % self.val_epoch == 0:
                         total_correct = 0
                         total_wrong = 0
-                        for i in range(test_iters_per_epoch):
-                            op = [test_handle.selection, test_answer]
+                        for i in range(val_iters_per_epoch):
+                            op = [val_handle.selection, val_answer]
                             s_, a_ = sess.run(op)
 
-                            s_ = np.array(s_)
-                            a_ = np.array(a_)
+                            s_ = np.array(s_).reshape(-1)
+                            a_ = np.array(a_).reshape(-1)
 
                             correct = np.sum(s_ == a_)
                             wrong = np.sum(s_ != a_)
                             if (i+1) % self.print_step == 0:                            
                                 print('[eval] [epoch {} | iter {}/{} | save point {}] correct: {}, wrong: {}'.format(
-                                        e+1, i+1, test_iters_per_epoch, save_point, correct, wrong))
+                                        e+1, i+1, val_iters_per_epoch, save_point, correct, wrong))
                             total_correct += correct
                             total_wrong += wrong
 
@@ -334,6 +345,3 @@ class Solver(object):
 
     def test(self):
         pass
-
-
-
