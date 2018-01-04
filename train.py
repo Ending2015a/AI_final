@@ -17,7 +17,7 @@ def main():
     print('Bulid Model...')
     model = MemNet(vocab_size = vocab_size,
                     embed_size = 512,
-                    n_hop = 10,
+                    n_hop = 6,
                     memory_size = 20,
                     sentence_size = 50,
                     option_size = 10)
@@ -32,7 +32,7 @@ def main():
                     restore_path = './checkpoint/',
                     eval_epoch = 1,
                     save_epoch = 1,
-                    print_step = 5,
+                    print_step = 10,
                     summary_step = 10)
 
     solver.train()

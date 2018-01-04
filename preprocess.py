@@ -242,6 +242,15 @@ def encode_question(q, enc_map):
 
     return enc_q
 
+def data_augmentation(index, *args):
+    l = [ 1 if i==index else 0 for i in range(len(args[0]))]
+    x = list(zip(l, *args))
+    import random
+    random.shuffle(x)
+    l, *args = zip(*x)
+    index = l.index(1)
+    return (index, *args)
+
 def decode_question(q, dec_map):
     raw_st = []
     for ids in q['sentences']:
