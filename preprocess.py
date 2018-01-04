@@ -20,7 +20,7 @@ encode_path = 'encode/'
 encode_map_path = 'enc_map.pkl'
 decode_map_path = 'dec_map.pkl'
 vocab_path = 'vocab.pkl'
-vocab_threshold = 100
+vocab_threshold = 200
 
 exclusive_vocab = []
 
@@ -94,37 +94,7 @@ def read_data(filename):
 
     return lines
 
-def parse_21th(line, with_answer=True):
-    last = [x for x in line.split('\t') if x!='']
-    q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
-    option = []
-    question_with_option = []
-
-    if with_answer:
-        a = ''.join(ch for ch in last[1] if ch not in exc)
-        raw_option = last[2].split('|')
-    else:
-        a = ''
-        raw_option = last[1].split('|')
-    if len(raw_option) > 10:
-        raw_option = raw_option[0:10]
-    elif len(raw_option) < 10:
-        raw_option = raw_option + ['']*(10-raw_option)
-
-    for x in raw_option:
-        o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
-        option.append(o)
-        o = q.replace('<blank>', o)
-        question_with_option.append(o)
-
-    assert(len(sent) == 20)
-    assert(len(option) == 10)
-
-    if with_answer:
-        idx = option.index(a)
-    else:
-        idx = 0
-
+def parse_21th(line, filter, with_answer=True):
     return q, a, option, question_with_option, idx
 
 def parse_questions(lines, with_answer=True):
@@ -140,9 +110,36 @@ def parse_questions(lines, with_answer=True):
         for i in range(20):
             line = lines[i].split(' ', 1)[1]
             sent.append( filter(line) )
-        last = [x for x in lines[-1].split('\t') if x!='' ]
 
-        q, a, option, question_with_option, idx = parse_21th(lines[-1], with_answer)
+        last = [x for x in lines[-1].split('\t') if x!='' ]
+        q = filter(last[0].split(' ', 1)[1]).replace(blank, '<blank>')
+        option = []
+        question_with_option = []
+
+        if with_answer:
+            a = ''.join(ch for ch in last[1] if ch not in exc)
+            raw_option = last[2].split('|')
+        else:
+            a = ''
+            raw_option = last[1].split('|')
+        if len(raw_option) > 10:
+            raw_option = raw_option[0:10]
+        elif len(raw_option) < 10:
+            raw_option = raw_option + ['']*(10-raw_option)
+
+        for x in raw_option:
+            o = ''.join(ch for ch in x.replace('\n', '') if ch not in exc)
+            option.append(o)
+            o = q.replace('<blank>', o)
+            question_with_option.append(o)
+
+        assert(len(sent) == 20)
+        assert(len(option) == 10)
+
+        if with_answer:
+            idx = option.index(a)
+        else:
+            idx = 0
 
         question = {'sentences': sent, 
                     'question': q, 
