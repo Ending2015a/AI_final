@@ -24,7 +24,7 @@ def main():
 
     print('Bulid Solver...')
     solver = Solver(model, enc_map, dec_map,
-                    eval_batch_size = 64,
+                    eval_batch_size = 128,
                     test_record_path = './record/test/',
                     test_examples = 10000,
                     restore_path = './checkpoint/',

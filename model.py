@@ -19,7 +19,7 @@ def position_encoding(sentence_size, embedding_size):
 
 class MemNet(object):
     def __init__(self, vocab_size, embed_size=512, n_hop=3, memory_size=20, sentence_size=216, option_size=10,
-            position_weight = 0.3,
+            position_weight = 0.5,
             sentence_encoding = position_encoding,
             emb_initializer = tf.random_normal_initializer(stddev=0.1)):
 

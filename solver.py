@@ -58,7 +58,7 @@ class Solver(object):
         if not os.path.exists(self.log_path):
             os.makedirs(self.log_path)
 
-    def create_dataset(self, record_path):
+    def create_dataset(self, record_path, batch_size):
         def training_parser(record):
             keys_to_features = {
                 'sentences': tf.FixedLenFeature([self.sentence_size*self.memory_size], tf.int64),
@@ -97,7 +97,7 @@ class Solver(object):
             return iterator, output_types, output_shapes
 
         filenames = [os.path.join(record_path, x) for x in os.listdir(record_path)]
-        iterator, types, shapes = tfrecord_iterator(filenames, self.batch_size, training_parser)
+        iterator, types, shapes = tfrecord_iterator(filenames, batch_size, training_parser)
         records = iterator.get_next()
 
         sentences = tf.reshape(records['sentences'], [-1, self.memory_size, self.sentence_size])
@@ -108,11 +108,11 @@ class Solver(object):
         return iterator, sentences, queries, mask, answers
 
 
-    def build_dataset(self, data_list):
+    def build_dataset(self, data_list, batch_size):
         def padding_sentence(sentence, size, padding_word=0):
             length = len(sentence)
             crop = max(length-size, 0)
-            pad = max(size-length, 0)
+            pad = max(size-length, 0, batch_size)
             sentence = sentence[0:length-crop] + [padding_word]*pad
             return sentence
 
@@ -145,14 +145,14 @@ class Solver(object):
 
 
         sent, qwo, idx = tf.train.slice_input_producer(
-                [sents_list, qwos_list, idx_list], capacity=self.batch_size * 8)
+                [sents_list, qwos_list, idx_list], capacity=batch_size * 8)
 
         sent_batch, qwo_batch, idx_batch = tf.train.shuffle_batch(
                 [sent, qwo, idx],
-                batch_size = self.batch_size,
+                batch_size = batch_size,
                 num_threads = 8,
-                capacity = self.batch_size * 5,
-                min_after_dequeue = self.batch_size * 2)
+                capacity = batch_size * 5,
+                min_after_dequeue = batch_size * 2)
 
         return sent_batch, qwo_batch, idx_batch
 
@@ -170,8 +170,8 @@ class Solver(object):
         print(' :: Generating Dataset...')
 
         # create training & testing dataset
-        train_iter, train_sent, train_query, train_mask, train_answer = self.create_dataset(self.train_record_path);
-        val_iter, val_sent, val_query, val_mask, val_answer = self.create_dataset(self.val_record_path);
+        train_iter, train_sent, train_query, train_mask, train_answer = self.create_dataset(self.train_record_path, self.batch_size);
+        val_iter, val_sent, val_query, val_mask, val_answer = self.create_dataset(self.val_record_path, self.batch_size);
 
         # training set info
         train_examples = self.train_examples
@@ -344,14 +344,12 @@ class Solver(object):
 
 
     def test(self):
-        # create global step
-        global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
         
         # build dataset
         print(' :: Generating Dataset...')
 
         # create testing dataset
-        test_iter, test_sent, test_query, test_mask, test_answer = self.create_dataset(self.test_record_path);
+        test_iter, test_sent, test_query, test_mask, test_answer = self.create_dataset(self.test_record_path, self.eval_batch_size);
 
         # validation set info
         test_examples = self.test_examples
@@ -404,7 +402,7 @@ class Solver(object):
             total_correct = 0
             total_wrong = 0
             for i in range(test_iters_per_epoch):
-                op = [val_handle.selection, val_answer]
+                op = [test_handle.selection, test_answer]
                 s_, a_ = sess.run(op)
 
                 s_ = np.array(s_).reshape(-1)
@@ -413,13 +411,13 @@ class Solver(object):
                 correct = np.sum(s_ == a_)
                 wrong = np.sum(s_ != a_)
                 if (i+1) % self.print_step == 0:                            
-                    print('[eval] [epoch {} | iter {}/{} | save point {}] correct: {}, wrong: {}'.format(
-                                    e+1, i+1, val_iters_per_epoch, save_point, correct, wrong))
+                    print('[eval] [iter {}/{}] correct: {}, wrong: {}'.format(
+                                    i+1, test_iters_per_epoch, correct, wrong))
                 total_correct += correct
                 total_wrong += wrong
 
             accuracy = float(total_correct) / float(total_correct + total_wrong)
-            print('\n[eval] [epoch {} | save point {}] total O/X: {}/{}, accuracy: {:.4f}\n'.format(e+1, save_point, total_correct, total_wrong, accuracy))
+            print('\n[eval] total O/X: {}/{}, accuracy: {:.4f}\n'.format(total_correct, total_wrong, accuracy))
 
             coord.request_stop()
             coord.join(threads)
